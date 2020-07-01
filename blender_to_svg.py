@@ -1,3 +1,4 @@
+
 bl_info = {
     "name" : "SVG Export",
     "author": "VUT",
@@ -93,11 +94,17 @@ class Curve:
         self.vertices = vertices.copy() #indices to array of vertices
         self.color = color
         
-    def draw_object( self, file, vertices ):
+    def draw_object( self, file, scene, res ):
         
+        #file.write( f"""<!-- {self.id}--> \n""" )
         file.write( f"""<polyline points=\"""" )
-        for v in self.vertices:
-            file.write( f"""{round( vertices[v][0], 4 )},{round( vertices[v][1], 4 )} """ )
+        
+        for vertex in self.vertices:
+            v = scene.vertex_to_screen_coords( scene.vertices[vertex], res )
+            file.write( f"""{round( v[0], 4 )},{round( v[1], 4 )} """ )
+        
+#        for v in self.vertices:
+#            file.write( f"""{round( vertices[v][0], 4 )},{round( vertices[v][1], 4 )} """ )
         file.write( f"""\" fill="none" stroke="rgb({str(self.color[:3])[1:-1]})" stroke-width="2" stroke-linecap="round"/>\n""" )
         
 
@@ -139,6 +146,7 @@ class Polygon:
         
         
     def draw_object( self, file, scene, res ):
+        
         file.write( f"""<!-- {self.id}--> \n""" )
         file.write( f"""<polygon points=\"""" )
         
@@ -920,11 +928,12 @@ class SVG_export( bpy.types.Operator ):
     def find_cross_point_line_triangle ( self, scene, curve, triangle, start, end_loop ):
         
         n = triangle.normal.to_3d()        
-        A = scene.vertices[ triangle.vertices[0] ].co        
-                    
+        A = scene.vertices[ triangle.vertices[0] ].co                    
         d = n.dot( A )
+        
+        j = start
         #loop trhough all segments of line
-        for j in range( start, end_loop ):
+        while( j < end_loop ):
             L_j = curve.vertices[ j - 1 ]
             M_j = curve.vertices[ j ]
 #            if ( L_j == M_j ):
@@ -937,6 +946,7 @@ class SVG_export( bpy.types.Operator ):
             e = n.dot( R )
                     
             if ( e == 0.0 ):
+                j += 1
                 continue
             x = ( d - f ) / e
 
@@ -946,39 +956,39 @@ class SVG_export( bpy.types.Operator ):
                 B = scene.vertices[ triangle.vertices[1] ].co
                 C = scene.vertices[ triangle.vertices[2] ].co
                 if ( self.line_in_triangle ( scene, A, B, C, n, inter ) ):
-                    yield inter, L_j, M_j
+                    #tri-tri
+                    if start == 0:
+                        yield inter, L_j, M_j
+                    #curve-tri
+                    elif start == 1:
+                        temp_verts = curve.vertices[:j]
+                        curve.vertices = curve.vertices[j:]
+                    
+                        key = 'I' + str( L_j ) + str( M_j )
+                        curve.vertices.insert( 0, key )
+                        temp_verts.append( key )
+                    
+                        scene.curves.append( Curve( temp_verts, curve.color ) )
+                    
+                        inter = Intersection( inter, L_j, M_j )
+                        scene.vertices[ key ] = inter
+                    
+                        end_loop = len( curve.vertices ) - 1
+                        j = 0
                 
-        #yield None, ..., ...
+            j += 1
 
-
-
-    def line_tri_inter_gen ( self, scene, curve ):
-        
-        #loop through triangles in the scene
-        for tri in scene.triangles:
-            end_loop = len( curve.vertices ) - 1
-            for inter, A_i, B_i in self.find_cross_point_line_triangle( scene, curve, tri, 1, end_loop ):
-                ##add intersection
-                keys = [ A_i, B_i ]
-                key = 'I' + str( keys[0] ) + str( keys[1] )
-                inter = Intersection( inter, keys[0], keys[1] )
-                scene.vertices[ key ] = inter
-                yield key
-            
             
             
     def collision_line_triangle ( self, scene ):
 
         #loop through curves in the scene
         for curve in reversed( scene.curves ):
-            #curve processing
-            for i in self.line_tri_inter_gen( scene, curve ):
-                split_end = curve.vertices.index( scene.vertices[i].sub_index )
-                temp_verts = curve.vertices[:split_end]
-                curve.vertices = curve.vertices[split_end:]
-                curve.vertices.insert( 0, i )
-                temp_verts.append( i )
-                scene.curves.append( Curve( temp_verts, curve.color ) )
+            #loop through triangles in the scene
+            for tri in scene.triangles:
+                end_loop = len( curve.vertices ) - 1
+                for _ in self.find_cross_point_line_triangle( scene, curve, tri, 1, end_loop ):
+                    pass
                 
                 
                 
@@ -1020,8 +1030,6 @@ class SVG_export( bpy.types.Operator ):
                         
                         if ( cross == zero ):
                             continue
-                        
-                        
                         
                         f_ints = []
                         for inter, A_i, B_i in self.find_cross_point_line_triangle( scene, tri_1, tri_2, 0, 3 ):
@@ -1297,24 +1305,6 @@ class SVG_export( bpy.types.Operator ):
 
 
     
-    #OLD FUNS
-    def find_cross_points( self, tri, v, r0, vertices ):
-        
-        tri_params = []
-        tri_lines = []
-        
-        for i in range(0,3):
-            res = self.compute_lines_params( vertices[ tri.vertices[i] ], vertices[ tri.vertices[i-1] ], v, r0 )
-#            print ( 'res ', res )
-            
-            if ( res[1] >= 0 and res[1] <= 1 ):
-                tri_params.append( res[0] )
-                tri_lines.append( [ tri.vertices[i], tri.vertices[i-1], res[0], res[1] ] )
-                
-        return tri_params, tri_lines    
-
-    
-    
     def add_split_triangles ( self, scene, tri, ints, f_iter ):
         
         data = scene.vertices
@@ -1487,7 +1477,6 @@ class SVG_export( bpy.types.Operator ):
         #first poly
         poly.vertices = temp_polys[0].copy()
         for tri in temp_tris:
-            #!!!!!!
             res = all( x in poly.vertices for x in scene.triangles[ tri ].vertices )
             if ( not res ):
                 poly.tris.remove( tri )
@@ -1907,7 +1896,7 @@ class BTree:
                         self.left.BTree_traversal( scene, new_item, coll )
                     else:
                         self.left = BTree( new_item )
-                else:
+                elif ( inter_f[2] < inter_s[2] ):
                     if self.right:
                         self.right.BTree_traversal( scene, new_item, coll )
                     else:
