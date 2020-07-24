@@ -1882,10 +1882,8 @@ class Octree:
         min = None
         i = 0
         while self.context:
-            min = self.context[0]
-            end = len( self.context ) - i
-            print(end)
-            print(i)
+            min = self.context[i]
+            end = len( self.context )
             for j in range( 1, end ):
                 s_item = self.context[j]
                 #if min is above s_item
@@ -1895,20 +1893,13 @@ class Octree:
                     #s_item.elems_under.add( min )
                 else:
                     #min.elems_under.add( s_item )
-                    #rotate array
-                    self.context = self.context[j:] + self.context[:j]
-                    i += 1
+                    i = j
                     break
                 
             else:
                 sorted_context.append( min )
                 self.context.remove( min )
                 i = 0
-            
-#            if i == end:
-#                sorted_context.append( min )
-#                self.context.remove( min )
-#                i = 0
 
         sorted_context.reverse()
         self.context = sorted_context.copy()
