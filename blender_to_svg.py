@@ -242,7 +242,7 @@ class Scene:
                             temp_gen = self.tri_verts_norm_gen( in_tri )
                             
                         #find intersections
-                        for inter_n in self.find_tri_tri_intersection_2d( f_tri, s_tri ):
+                        for inter_n in temp_gen:
                             inter_f, inter_s = self.get_intersections( inter_n, f_tri, s_tri )
                             if inter_f == inter_s:
                                 continue
