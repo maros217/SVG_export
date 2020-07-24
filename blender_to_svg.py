@@ -143,6 +143,7 @@ class Polygon:
         self.poly_index = poly_index    #index to array of polygons
         self.color = color
         self.id = id
+        self.elems_under = set()
         
         
     def draw_object( self, file, scene, res ):
@@ -216,19 +217,100 @@ class Scene:
         elif isinstance( elem_f, Polygon ) and isinstance( elem_s, Curve ):
             pass
         elif isinstance( elem_f, Polygon ) and isinstance( elem_s, Polygon ):
+#            print('elem_f ', elem_f)
+#            print('elem_s ', elem_s)
             for f_tri_i in elem_f.tris:
                 f_tri = self.triangles[ f_tri_i ]
+                
                 for s_tri_i in elem_s.tris:
                     s_tri = self.triangles[ s_tri_i ]
-                    if self.triangles_overlap( f_tri, s_tri ):
-                        return self.find_tri_tri_intersection_2d( f_tri, s_tri )
+#                    print('f_tri ', f_tri)
+#                    print('s_tri ', s_tri)
+                    res, in_tri, out_tri = self.triangles_overlap( f_tri, s_tri )
+                    #if overlap in clip space
+                    if res:
+                        #cross edges
+                        if not in_tri:
+                            #find intersections
+                            for inter_n in self.find_tri_tri_intersection_2d( f_tri, s_tri ):
+                                inter_f, inter_s = self.get_intersections( inter_n, f_tri, s_tri )
+                                if inter_f == inter_s:
+                                    continue
+                                elif inter_f[2] < inter_s[2]:
+                                    return True
+                                else:
+                                    return False
+                        #one tri in second
+                        else:
+                            temp_arr = in_tri.vertices.copy()
+                            for i_vert in in_tri.vertices:
+                                for o_vert in out_tri.vertices:
+                                    i = self.vertices[i_vert]
+                                    o = self.vertices[o_vert]
+                                    if i.co == o.co:
+                                        temp_arr.remove(i_vert)
+                            try:
+                                inter_hom = self.vertices[ temp_arr[0] ]
+                            except IndexError:
+                                inter_hom = self.vertices[ in_tri.vertices[0] ]
+                            
+                            inter = ( inter_hom / inter_hom[3] ).to_2d()
+                            inter_f, inter_s = self.get_intersections( inter, f_tri, s_tri )
+#                            print('inter_f ', inter_f)
+#                            print('inter_s ', inter_s)
+                            if inter_f == inter_s:
+                                continue
+                            elif inter_f[2] < inter_s[2]:
+                                return True
+                            else:
+                                return False
                     
-        return None, None, None
+        return False
 
 
+    
+    def point_tri_overlap ( self, f_tri, s_tri ):
+        
+        #loop through points of second triangle
+        for j in range(3):
+            X_j = s_tri.vertices[j]
+            X = self.vertices[X_j]
+            X_n = ( X / X[3] ).to_2d()
+            
+            res = []
+            #loop through edges of first triangle
+            for i in range(3):
+                C_i = f_tri.vertices[i - 2]
+                A_i = f_tri.vertices[i - 1]
+                B_i = f_tri.vertices[i]
+                A = self.vertices[A_i]
+                B = self.vertices[B_i]
+                C = self.vertices[C_i]
                         
+                A_n = ( A / A[3] ).to_2d()
+                B_n = ( B / B[3] ).to_2d()
+                C_n = ( C / C[3] ).to_2d()
+                    
+                # line equation
+                # n.(X - A) = 0
+                s = ( B_n - A_n )
+                n = Vector( ( -s[1], s[0] ) ).normalized()
+                
+                opposite = n.dot( C_n - A_n )
+                if opposite < 0.0:
+                    n *= -1.0
+                
+                res.append( n.dot( X_n - A_n ) )
+                
+            if all( r > 0.0 for r in res ):
+                yield X_n
+                
+
+                
+        
     def tri_tri_overlap ( self, f_tri, s_tri ):
     
+        sec_in_first = True
         #loop through edges of first triangle
         for i in range(3):
             C_i = f_tri.vertices[i - 2]
@@ -250,31 +332,92 @@ class Scene:
             opposite = n.dot( C_n - A_n )
             if opposite < 0.0:
                 n *= -1.0
-
-            #check all points of second triangle            
+            
+            #check all points of second triangle
             res = []
             for j in range(3):
                 X_j = s_tri.vertices[j]
                 X = self.vertices[X_j]
                 X_n = ( X / X[3] ).to_2d()
-
+                
                 res.append( n.dot( X_n - A_n ) )
-                    
-
-            if all( r <= 0.0 for r in res ):
-                return False
             
-        return True
+            if all( r <= 0.0 for r in res ):
+                return False, False
+            
+            if all( r >= 0.0 for r in res ):
+                sec_in_first = sec_in_first and True
+            else:
+                sec_in_first = sec_in_first and False
+                
+        return True, sec_in_first
+    
     
     
     def triangles_overlap ( self, f_tri, s_tri ):
     
-        return self.tri_tri_overlap( f_tri, s_tri ) and self.tri_tri_overlap( s_tri, f_tri )                    
-
-
-
-    def find_tri_tri_intersection_2d ( self, f_tri, s_tri ):
+        res_1, inner_1 = self.tri_tri_overlap( f_tri, s_tri )
+        res_2, inner_2 = self.tri_tri_overlap( s_tri, f_tri )
         
+        in_tri = None
+        out_tri = None
+        if inner_1:
+            in_tri = s_tri
+            out_tri = f_tri
+        elif inner_2:
+            in_tri = f_tri
+            out_tri = s_tri
+    
+        return res_1 and res_2, in_tri, out_tri
+
+
+    
+    def find_line_line_intersection_2d ( self, A_n, B_n, D_n, E_n ):
+        
+        #determinant
+        D_00 = B_n[0] - A_n[0]
+        D_01 = D_n[0] - E_n[0]
+        D_10 = B_n[1] - A_n[1]
+        D_11 = D_n[1] - E_n[1]
+                
+        #right side
+        b_0 = D_n[0] - A_n[0]
+        b_1 = D_n[1] - A_n[1]
+                
+        try:
+            det = D_00 * D_11 - D_10 * D_01
+            t =  ( b_0*D_11 - b_1*D_01 ) / det
+            s =  ( D_00*b_1 - D_10*b_0 ) / det
+        except ZeroDivisionError:
+            return None
+                
+        if ( 0.0 < t < 1.0 and 0.0 < s < 1.0 ):
+#            C_i = f_tri.vertices[i - 2]
+#            C = self.vertices[C_i]
+#            C_n = ( C / C[3] ).to_2d()
+#                    print('f tri')
+#                    print(A_n)
+#                    print(B_n)
+#                    print(C_n)
+                    
+#            F_i = s_tri.vertices[j - 2]
+#            F = self.vertices[F_i]
+#            F_n = ( F / F[3] ).to_2d()
+#                    print('s tri')
+#                    print(D_n)
+#                    print(E_n)
+#                    print(F_n)
+                    
+#                    print('t ', t)
+#                    print('s ', s)
+            return D_n + ( E_n - D_n ) * s
+                
+        return None
+    
+    
+        
+    def find_tri_tri_intersection_2d ( self, f_tri, s_tri ):
+                
         for i in range(3):
             A_i = f_tri.vertices[i - 1]
             B_i = f_tri.vertices[i]
@@ -283,70 +426,52 @@ class Scene:
             
             A_n = ( A / A[3] ).to_2d()
             B_n = ( B / B[3] ).to_2d()
-
+            
             for j in range(3):
                 D_j = s_tri.vertices[j - 1]
                 E_j = s_tri.vertices[j]
                 D = self.vertices[D_j]
                 E = self.vertices[E_j]
-            
+                
                 D_n = ( D / D[3] ).to_2d()
                 E_n = ( E / E[3] ).to_2d()
                 
-                #determinant
-                D_00 = B_n[0] - A_n[0]
-                D_01 = D_n[0] - E_n[0]
-                D_10 = B_n[1] - A_n[1]
-                D_11 = D_n[1] - E_n[1]
+                inter = self.find_line_line_intersection_2d( A_n, B_n, D_n, E_n )
+                if inter:
+                    yield inter
                 
-                #right side
-                b_0 = D_n[0] - A_n[0]
-                b_1 = D_n[1] - A_n[1]
+        for vert in self.point_tri_overlap( f_tri, s_tri ):
+            yield vert 
+            
+        for vert in self.point_tri_overlap( s_tri, f_tri ):
+            yield vert
                 
-                try:
-                    det = D_00 * D_11 - D_10 * D_01
-                    t =  ( b_0*D_11 - b_1*D_01 ) / det
-                    s =  ( D_00*b_1 - D_10*b_0 ) / det
-                except ZeroDivisionError:
-                    continue
-                
-                if ( 0.00001 <= t <= 0.9999 and 0.00001 <= s <= 0.9999 ):
-                    return D_n + ( E_n - D_n ) * s, f_tri, s_tri
                     
-                    
-        return Vector( (-2.0, -2.0) ) ,f_tri, s_tri
-    
-    
-    
-    def plane_vs_vertices ( self, f_poly, s_poly ):
-    
-        #plane equation
-        #Nx * (x - Ax) + Ny * (y - Ay) + Nz * (z - Az) = 0
+            
+    def find_cross_point_line_line ( self, A, B, C, D ):
         
-        A = self.vertices[ f_poly.vertices[0] ]
-        B = self.vertices[ f_poly.vertices[1] ]
-        C = self.vertices[ f_poly.vertices[2] ]
-        N = ( (B - A).to_3d().cross((C - A).to_3d()) ).normalized()
-                    
-        #turn normal vector in positive direction
-        if ( N[2] < 0.0 ):
-            N *= -1.0
+        #determinant
+        D_00 = B[0] - A[0]
+        D_01 = D[0] - C[0]
+        D_10 = B[1] - A[1]
+        D_11 = D[1] - C[1]
         
-        res = []
-        #insert vertices of first triangle to equation
-        for vertex in s_poly.vertices:
-            V = self.vertices[ vertex ]
-            res.append( N.dot(V - A) )
+        #right side
+        b_0 = C[0] - A[0]
+        b_1 = C[1] - A[1]
+        
+        try:
+            det = D_00 * D_11 - D_10 * D_01
+            t =  ( b_0*D_11 - b_1*D_01 ) / det
+            s = -( D_00*b_1 - D_10*b_0 ) / det
+        except ZeroDivisionError:
+            return None
+        
+        if ( abs( t * ( B[2]-A[2] ) - s * ( D[2] - C[2] ) + ( A[2]-C[2] ) ) < 0.004 ):
+            if( 0.0 <= t <= 1.0 and 0.0 <= s <= 1.0 ):
+                return C + ( D - C ) * s
 
-        greater = all( r >= -0.000001 for r in res )
-        if ( greater ):
-            return 1
-        
-        less = all( r <= 0.000001 for r in res )
-        if ( less ):
-            return -1
-
-        return 10      
+        return None
     
     
     
@@ -370,7 +495,7 @@ class Scene:
             return None, None
         
         x = ( d - f ) / e
-        if ( 0.0 <= x and x <= 1.0 ):
+        if ( 0.0 < x and x < 1.0 ):
             #compute intersection
             inter_f = I_n + R * x
         
@@ -384,10 +509,27 @@ class Scene:
             return None, None
         
         x = ( d - f ) / e
-        if ( 0.0 <= x and x <= 1.0 ):
+        if ( 0.0 < x and x < 1.0 ):
             #compute intersection
             inter_s = I_n + R * x
             
+        return inter_f, inter_s
+    
+    
+    
+    def get_intersections_l ( self, inter, A, B, C, D ):
+        
+        near = self.camera.data.clip_start
+        far  = self.camera.data.clip_end
+        
+        #line from near plane to far plane
+        I_n = Vector( ( inter[0]*2*near, inter[1]*2*near, -2*near ) )
+        I_f = Vector( ( inter[0]*far, inter[1]*far, far ) )
+        
+        #find intersections with line and line
+        inter_f = self.find_cross_point_line_line( I_n, I_f, A, B )
+        inter_s = self.find_cross_point_line_line( I_n, I_f, C, D )
+        
         return inter_f, inter_s
        
 
@@ -467,9 +609,6 @@ class SVG_export( bpy.types.Operator ):
         print("--- %s seconds ---" % (time.time() - start_time))                    
 
 
-            
-
-
 
                 
         
@@ -518,11 +657,12 @@ class SVG_export( bpy.types.Operator ):
         #TRIANGLE - TRIANGLE
         self.collision_triangle_triangle( scene )
         
-        print("--- %s seconds ---" % (time.time() - start_time))  
+        #self.check_curve_collision_with_itself( scene )
+        
+        print("--- %s seconds ---" % (time.time() - start_time))
 
 
         print('Build Octree')
-        #scene.items = scene.curves + scene.polygons
         #Create octree
         x1 = y1 = z1 = -2 * scene.camera.data.clip_start
         x2 = y2 = z2 = scene.camera.data.clip_end
@@ -542,7 +682,7 @@ class SVG_export( bpy.types.Operator ):
         
         print("--- %s seconds ---" % (time.time() - start_time))  
 
-        self.filename = "myfile.svg"
+        self.filename = "file.svg"
         self.export_to_svg( scene, root )
         
         print('Finished')
@@ -1104,6 +1244,12 @@ class SVG_export( bpy.types.Operator ):
                     
                     start = len(scene.polygons)
                     self.split_polygon( scene, s_poly, temp_polys )
+#                    print('s poly   ', s_poly)
+#                    print('new poly ', scene.polygons[-1])
+#                    for t in scene.polygons[-1].tris:
+#                        print( scene.triangles[t] )
+                        
+                    
                     
                     temp_polys.clear()
                     
@@ -1491,6 +1637,45 @@ class SVG_export( bpy.types.Operator ):
                     p.tris.append( tri )
                         
             scene.polygons.append( p )
+            
+            
+            
+    def check_curve_collision_with_itself ( self, scene ):
+    
+        #clip curve by colission with itself
+        for curve in reversed( scene.curves ):
+            i = len( curve.vertices ) - 2
+            while ( i > 0 ):
+                for j in range( i - 1, -1, -1 ):
+                    #edge_i
+                    A_i = curve.vertices[i + 1]
+                    B_i = curve.vertices[i]
+                    A = scene.vertices[A_i]
+                    B = scene.vertices[B_i]
+                    
+                    A_n = ( A / A[3] ).to_2d()
+                    B_n = ( B / B[3] ).to_2d()
+                    
+                    #edge_j
+                    D_i = curve.vertices[j + 1]
+                    E_i = curve.vertices[j]
+                    D = scene.vertices[D_i]
+                    E = scene.vertices[E_i]
+                    
+                    D_n = ( D / D[3] ).to_2d()
+                    E_n = ( E / E[3] ).to_2d()
+                    
+                    inter_n = scene.find_line_line_intersection_2d( A_n, B_n, D_n, E_n )
+                    if inter_n:
+                        inter_f, inter_s = scene.get_intersections_l( inter_n, A, B, D, E )
+                        #divide curve
+                        if inter_f > inter_s:
+                            scene.curves.append( Curve( curve.vertices[j+1:], curve.color ) )
+                            curve.vertices = curve.vertices[:j+2]
+                            i = len( curve.vertices ) - 2
+                            j = 0
+                            
+                i -= 1
     
 
 
@@ -1668,7 +1853,9 @@ class Octree:
 
     def divide_node( self, scene ):
         
-        num_of_items = 50
+#        print('in root')
+#        print(len( self.context ))
+        num_of_items = 10000
         if ( len( self.context ) > num_of_items ):
             self.divide_voxel()
             
@@ -1685,126 +1872,75 @@ class Octree:
                         items_end = len( self.context )
                     else:
                         items_iter += 1
+#                print('divide')
                 node.divide_node( scene )
         
         #sort context after divide
-        if ( self.context ):
-            temp_context = [ [self.context[0]] ]
+#        print('\nunsorted context ', self.context)
         
-            for elem in self.context[1:]:
-                overlap_pos = []
-                overlap_with = []
-                t_iter = 0
-                t_end = len( temp_context )
-                while( t_iter < t_end ):
-                    i_iter = 0
-                    i_end = len( temp_context[t_iter] )
-                    while( i_iter < i_end ):
-                        i_elem = temp_context[t_iter][i_iter]
-                        inter, f_tri, s_tri = scene.check_collision_clip_space( elem, i_elem )
-                        if ( inter ):
-                            oo = overlap_pos
-                            ow = overlap_with
-
-                            if ( inter[0] != -2.0 ):
-                                inter_f, inter_s = scene.get_intersections( inter, f_tri, s_tri )
-                                if ( inter_f[2] > inter_s[2] ):
-                                    index = i_iter
-                                    temp_context[t_iter].insert( index, elem )
-                                    i_iter += 1
-                                    i_end += 1
-                                    
-                                else:
-                                    index = i_iter + 1
-                                    temp_context[t_iter].insert( index, elem )
-                                    i_iter = index
-                                    i_end += 1
-                                    
-
-                                overlap_with = [ t_iter, temp_context[t_iter].index( i_elem ) ]
-                                overlap_pos = [ t_iter, index ]
-                                
-                            else:
-                                res = scene.plane_vs_vertices( elem, i_elem )
-                                if ( res == 10 ):
-                                    res = scene.plane_vs_vertices( i_elem, elem ) * -1
-                                    
-                                if ( res == -1 ):
-                                    index = i_iter
-                                    temp_context[t_iter].insert( index, elem )
-                                    
-                                else:
-                                    index = i_iter + 1
-                                    temp_context[t_iter].insert( index, elem )
-                                    i_iter += 1
-                                    
-                                overlap_pos = [ t_iter, index ]
-                                overlap_with = [ t_iter, temp_context[t_iter].index( i_elem ) ]
-                                    
-                                    
-                            if ( oo ):
-                                coll_with_elem = temp_context[ ow[0] ][ ow[1] ]
-                                coll_elem = temp_context[ oo[0] ][ oo[1] ]
-                                
-                                if ( overlap_pos[0] == oo[0] ):
-                                    if ( overlap_pos[1] < overlap_with[1] ):
-                                        del temp_context[ oo[0] ][ overlap_pos[1] ]
-                                        i_iter = overlap_pos[1]
-                                        overlap_pos  = oo
-                                        overlap_with = ow
-                                        
-                                        
-                                    elif ( overlap_pos[1] > overlap_with[1] ):
-                                        del temp_context[ oo[0] ][ oo[1] ]
-                                        overlap_pos[1] = temp_context[oo[0]].index( coll_elem )
-                                        overlap_with[1] = temp_context[oo[0]].index( coll_with_elem )
-                                        i_iter = overlap_pos[1]
-                                else:
-                                    del temp_context[ oo[0] ][ oo[1] ]
-                                    temp_context[ oo[0] ][oo[1]:oo[1]] = temp_context[ overlap_pos[0] ]
-                                    del temp_context[ overlap_pos[0] ]
-                                    
-                                    overlap_pos  = [ oo[0], temp_context[oo[0]].index( coll_elem ) ]
-                                    overlap_with = [ oo[0], temp_context[oo[0]].index( coll_with_elem ) ]
-                                    
-                                    i_iter = overlap_pos[1]
-                                    
-                                t_iter = overlap_pos[0]
-                                t_end = len( temp_context )
-                                i_end = len( temp_context[t_iter] )
-                                    
-    
-                        i_iter += 1
-                    t_iter += 1
-                    
-                if ( not overlap_pos ):
-                    temp_context.append( [elem] )
+        sorted_context = list()
+        min = None
+        i = 0
+        while self.context:
+            min = self.context[0]
+            end = len( self.context ) - i
+            print(end)
+            print(i)
+            for j in range( 1, end ):
+                s_item = self.context[j]
+                #if min is above s_item
+                is_above = scene.check_collision_clip_space( min, s_item )
+                if not is_above:
+                    pass
+                    #s_item.elems_under.add( min )
+                else:
+                    #min.elems_under.add( s_item )
+                    #rotate array
+                    self.context = self.context[j:] + self.context[:j]
+                    i += 1
+                    break
                 
-            self.context = temp_context.copy()
+            else:
+                sorted_context.append( min )
+                self.context.remove( min )
+                i = 0
+            
+#            if i == end:
+#                sorted_context.append( min )
+#                self.context.remove( min )
+#                i = 0
 
-        
+        sorted_context.reverse()
+        self.context = sorted_context.copy()
+#        print('sorted context ', self.context)
+
         
         
     def traversal ( self, file, scene, res ):
         
-        item_iter = 0
-        items_end = len( self.context )
-        while ( item_iter < items_end ):
+        for elem in reversed( self.context ):
             for children in self.childrens:
                 if children:
                     children.traversal( file, scene, res )
                 
-            #get elem
-            elem = self.context[0][0]
+#            print('elem ', elem)
+            #check collision with parent node
             if self.not_collision_with_parent( scene, elem ):
-                elem.draw_object( file, scene, res )
-                del self.context[0][0]
-                if ( len( self.context[0] ) == 0 ):
-                    del self.context[0]
-                    items_end -= 1
-                    
-            item_iter += 1
-
+#                print('not collid with parent')
+#                print('elems under ', elem.elems_under)
+                #check collision with previous elems in self node
+                elem_i = self.context.index( elem )
+                for i in range( elem_i + 1, len( self.context ) ):
+                    if self.context[i] in elem.elems_under:
+#                        print('collision with self context')
+                        break
+                else:
+#                    print('render ', elem, '\n')
+                    print( len(self.context) )
+                    elem.draw_object( file, scene, res )
+                    self.context.remove( elem )
+#            else:
+#                print('collision with parent')
         
         x = 0
         for children in self.childrens:
@@ -1813,18 +1949,13 @@ class Octree:
             else:
                 if not self.context:
                     return 1
-
+        
         if x == 8:
             self.childrens = [ None for _ in range(8) ]
-
+        
         return 0
 
-    
-    
-    
 
-    
-    
 
     def not_collision_with_parent ( self, scene, f_elem ):
 
@@ -1832,112 +1963,17 @@ class Octree:
             if not self.parent.not_collision_with_parent( scene, f_elem ):
                 return False
             
-            for items in self.parent.context:
-                for s_elem in items:
-                    inter ,f_tri, s_tri = scene.check_collision_clip_space( f_elem, s_elem )
-                    if inter:
-                        if ( inter[0] != -2.0 ):
-                            inter_f, inter_s = scene.get_intersections( inter, f_tri, s_tri )
-                            if ( inter_f[2] < inter_s[2] ):
-                                return False
-                        else:
-                            res = scene.plane_vs_vertices( f_elem, s_elem )
-                            if ( res == 10 ):
-                                res = scene.plane_vs_vertices( s_elem, f_elem ) * -1
-                            if ( res == 1 ):
-                                return False
+            for s_elem in self.parent.context:
+                #if f_elem is above s_elem
+                if scene.check_collision_clip_space( f_elem, s_elem ):
+                    print(s_elem)
+                    return False
                         
         return True
                 
                 
 
 
-
-    
-    
-
-
-
-
-class BTree:
-    
-    def __init__ ( self, data = None ):
-        
-        self.left = None
-        self.right = None
-        self.context = list()
-        
-        if isinstance( data, list ):
-            self.context.extend( data )
-        else:
-            self.context.append( data )
-            
-            
-    
-    
-    
-    def BTree_traversal ( self, scene, new_item, coll ):
-        
-        i_iter = 0
-        i_end  = len( self.context )
-        while ( i_iter < i_end ):
-            item = self.context[ i_iter ]   #existing item in tree
-            inter, f_tri, s_tri = scene.check_collision_clip_space( new_item, item )
-            if not inter:
-                pass
-                #node.BTree_traversal( node.left, scene, new_item )
-                #node.BTree_traversal( node.right, scene, new_item )
-            else:
-                inter_f, inter_s = scene.get_intersections( inter, f_tri, s_tri )
-                coll = True
-                #insert
-                if ( inter_f[2] > inter_s[2] ):
-                    if self.left:
-                        self.left.BTree_traversal( scene, new_item, coll )
-                    else:
-                        self.left = BTree( new_item )
-                elif ( inter_f[2] < inter_s[2] ):
-                    if self.right:
-                        self.right.BTree_traversal( scene, new_item, coll )
-                    else:
-                        self.right = BTree( new_item )
-                        
-            i_iter += 1
-        
-        return coll
-            
-    
-    def copy ( self, old_root ):
-    
-        node = self
-        if node.context[0] < old_root.context[0]:
-            node.right = BTree( old_root.context )
-            node = node.right
-            #return node.right
-        elif node.context[0] > old_root.context[0]:
-            node.left = BTree( old_root.context )
-            node = node.left
-            #return node.left
-        else:
-            pass
-            #return node
-        
-        
-        if old_root.left:
-            node.copy( old_root.left )
-        if old_root.right:
-            node.copy( old_root.right )
-            
-        
-    
-    
-    
-
-        
-        
-    
-    
-    
 
 def register():
     bpy.utils.register_class(SVG_export)
