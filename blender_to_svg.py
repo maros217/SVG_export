@@ -205,6 +205,12 @@ class Scene:
         
     
     
+    def tri_verts_norm_gen ( self, tri ):
+        
+        for vert_i in tri.vertices:
+            vert = self.vertices[ vert_i ]
+            yield ( vert / vert[3] ).to_2d()
+    
     
     
     def check_collision_clip_space ( self, elem_f, elem_s ):
@@ -221,7 +227,6 @@ class Scene:
 #            print('elem_s ', elem_s)
             for f_tri_i in elem_f.tris:
                 f_tri = self.triangles[ f_tri_i ]
-                
                 for s_tri_i in elem_s.tris:
                     s_tri = self.triangles[ s_tri_i ]
 #                    print('f_tri ', f_tri)
@@ -231,33 +236,14 @@ class Scene:
                     if res:
                         #cross edges
                         if not in_tri:
-                            #find intersections
-                            for inter_n in self.find_tri_tri_intersection_2d( f_tri, s_tri ):
-                                inter_f, inter_s = self.get_intersections( inter_n, f_tri, s_tri )
-                                if inter_f == inter_s:
-                                    continue
-                                elif inter_f[2] < inter_s[2]:
-                                    return True
-                                else:
-                                    return False
+                            temp_gen = self.find_tri_tri_intersection_2d( f_tri, s_tri )
                         #one tri in second
                         else:
-                            temp_arr = in_tri.vertices.copy()
-                            for i_vert in in_tri.vertices:
-                                for o_vert in out_tri.vertices:
-                                    i = self.vertices[i_vert]
-                                    o = self.vertices[o_vert]
-                                    if i.co == o.co:
-                                        temp_arr.remove(i_vert)
-                            try:
-                                inter_hom = self.vertices[ temp_arr[0] ]
-                            except IndexError:
-                                inter_hom = self.vertices[ in_tri.vertices[0] ]
+                            temp_gen = self.tri_verts_norm_gen( in_tri )
                             
-                            inter = ( inter_hom / inter_hom[3] ).to_2d()
-                            inter_f, inter_s = self.get_intersections( inter, f_tri, s_tri )
-#                            print('inter_f ', inter_f)
-#                            print('inter_s ', inter_s)
+                        #find intersections
+                        for inter_n in self.find_tri_tri_intersection_2d( f_tri, s_tri ):
+                            inter_f, inter_s = self.get_intersections( inter_n, f_tri, s_tri )
                             if inter_f == inter_s:
                                 continue
                             elif inter_f[2] < inter_s[2]:
